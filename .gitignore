@@ -1,0 +1,6 @@
+audio_cache
+cachedir
+flagged
+__pycache__
+*rdb
+.env
