@@ -13,13 +13,12 @@ class GradioInterface:
     def __init__(self):
         self.tts_api_key = os.environ["OPENAI_API_KEY"]
         self.chat_api_key = os.environ["GROQ_API_KEY"]
-        self.producer = AsyncTTSProcessor(tts_api_key=self.tts_api_key, chat_api_key=self.chat_api_key)
-        self.player = AsyncAudioPlayer(self.producer)
-        self.player_task = None
-    
+        self.reset()
+
     def reset(self):
         self.producer = AsyncTTSProcessor(tts_api_key=self.tts_api_key, chat_api_key=self.chat_api_key)
         self.player = AsyncAudioPlayer(self.producer)
+        self.player_task = None
 
     async def start(self, file_path: str):
         if self.player_task:
@@ -33,11 +32,11 @@ class GradioInterface:
 
     async def pause(self):
         await self.player.pause()
-        return """**Paused**"""
+        return "**Paused**"
 
     async def resume(self):
         await self.player.resume()
-        return """**Resumed**"""
+        return "**Resumed**"
 
     async def stop(self):
         if self.player_task:
@@ -45,43 +44,43 @@ class GradioInterface:
             await self.player_task
             self.player_task = None
             self.reset()
-        return """**Stopped**"""
+        return "**Stopped**"
 
     def render_simplified(self):
-        
         while True:
             if self.player.curr_rank is None:
+                yield ""
                 continue
 
-            curr_sentence = self.player.curr_sentence.strip(' ')
+            curr_sentence = self.player.curr_sentence.strip()
             curr_para = self.player.curr_simp_paragraph
-            text_with_highlight = curr_para.replace(curr_sentence, f" <u>{curr_sentence}</u> ", 1)
-
-            yield f"""{text_with_highlight}"""
+            text_with_highlight = curr_para.replace(curr_sentence, f"<u>{curr_sentence}</u>", 1)
+            yield text_with_highlight
 
     def render_original(self):
         while True:
             if self.player.curr_rank is None:
+                yield ""
                 continue
 
             yield f"""
+## Original Paragraph
 
-    ## Original Paragraph
-
-    > {self.player.curr_orig_paragraph}
-    """
+> {self.player.curr_orig_paragraph}
+"""
 
     def render_details(self):
         while True:
             tts_count = self.player.total_chars
             tts_cost = tts_count / 1_000_000 * 15
 
-            chat_cost = self.producer.total_prompt_tokens / 1_000_000 * 0.15 + self.producer.total_completion_tokens / 1_000_000 * 0.075
+            chat_cost = (self.producer.total_prompt_tokens / 1_000_000 * 0.15 +
+                         self.producer.total_completion_tokens / 1_000_000 * 0.075)
 
             yield f"""
-- Total characters: {self.player.total_chars}
-- Estimated cost: ${tts_cost:.4f}
-- Estimated completion cost: ${chat_cost:.4f}
+- Total characters: {tts_count:,}
+- Estimated TTS cost: ${tts_cost:.4f}
+- Estimated chat cost: ${chat_cost:.4f}
 - Estimated total cost: ${tts_cost + chat_cost:.4f}
 """
 
@@ -104,12 +103,11 @@ class GradioInterface:
 
                 with gr.Column(scale=2):
                     with gr.Tab("Simplified"):
-                        with gr.Row():
-                            paragraph_display = gr.Markdown()
-                            interface.load(self.render_simplified, outputs=[paragraph_display], show_progress=False)
+                        paragraph_display = gr.Markdown()
+                        interface.load(self.render_simplified, outputs=[paragraph_display], show_progress=False)
                     with gr.Tab("Original"):
-                        details_display = gr.Markdown()
-                        interface.load(self.render_original, outputs=[details_display], show_progress=False)
+                        original_display = gr.Markdown()
+                        interface.load(self.render_original, outputs=[original_display], show_progress=False)
 
             file_input.change(self.start, inputs=[file_input], outputs=[status])
             pause_btn.click(self.pause, outputs=[status])

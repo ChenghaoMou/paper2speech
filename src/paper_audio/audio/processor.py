@@ -6,11 +6,10 @@ from dataclasses import dataclass
 
 import aiohttp
 import redis.asyncio as redis
+import spacy
 from loguru import logger
-from wtpsplit import SaT
 
-sat = SaT("sat-3l")
-
+nlp = spacy.load("en_core_web_sm")
 
 @dataclass
 class AudioSegment:
@@ -67,6 +66,7 @@ class AsyncTTSProcessor:
         redis_url: str = "redis://localhost",
         buffer_size: int = 2,
         cache_dir: str = "audio_cache",
+        cache_ttl: int = 60 * 60 * 24 * 30,
     ):
         self.buffer = Queue(maxsize=buffer_size)
         self.audio_cache_dir = cache_dir
@@ -84,6 +84,7 @@ class AsyncTTSProcessor:
         self.chat_model = chat_model
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self.cache_ttl = cache_ttl
 
         self.paragraphs = []
 
@@ -188,6 +189,7 @@ class AsyncTTSProcessor:
             segment.key,
             segment.to_json(),
         )
+        await self.redis.expire(segment.key, self.cache_ttl)
 
         return audio_path
 
@@ -223,10 +225,12 @@ class AsyncTTSProcessor:
                 paragraph
             )
             await self.redis.set(f"p_{paragraph_key}", cached_summary)
+            await self.redis.expire(f"p_{paragraph_key}", self.cache_ttl)
             self.total_prompt_tokens += prompt_tokens
             self.total_completion_tokens += completion_tokens
 
-        for j, sentence in enumerate(sat.split(cached_summary)):
+        for j, sentence in enumerate(nlp(cached_summary).sents):
+            sentence = sentence.text.strip()
             await self.process_sentence(
                 AudioSegment(
                     rank=rank,

@@ -97,6 +97,9 @@ class AsyncAudioPlayer:
 
             logger.info(f"Finishing audio for {self.curr_rank}")
             self.next_segment_to_play += 1
+
+            if self.curr_rank in self.audio_segments:
+                del self.audio_segments[self.curr_rank]
         
         self.curr_playback = None
         self.curr_rank = None
@@ -131,6 +134,14 @@ class AsyncAudioPlayer:
         if pygame.mixer.get_busy():
             pygame.mixer.stop()
         pygame.quit()
+
+        self.audio_segments.clear()
+        while not self.buffer.empty():
+            try:
+                self.buffer.get_nowait()
+                self.buffer.task_done()
+            except asyncio.QueueEmpty:
+                break
 
     def set_paragraphs(self, paragraphs: list[str]):
         self.next_segment_to_play = 0
