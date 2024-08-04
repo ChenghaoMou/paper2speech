@@ -1,33 +1,22 @@
-import re
-
-import fitz
 from diskcache import Cache
-from wtpsplit import SaT
+from dotenv import load_dotenv
 
-sat = SaT("sat-3l")
+load_dotenv()
 cache = Cache("cachedir")
 
-
 @cache.memoize()
-def get_text(path):
+def get_text(path) -> list[str]:
+    import fitz
+
     doc = fitz.open(path)
-    text = ""
-    for page in doc:
-        text += "\n\n" + page.get_text()
-    text = text.strip("\n")
-
-    # remove all bracketed text
-    text = re.sub(r"\[[^\]]*\]", "", re.sub(r"\([^)]*\)", "", text))
-
-    return text
-
-
-@cache.memoize()
-def get_paragraphs(text):
     results = []
-    for paragraph in sat.split(text, do_paragraph_segmentation=True):
-        text = re.sub(r"[\n \t\r]+", " ", "".join(paragraph)).strip()
-        if text:
-            results.append(text)
-    
+    for page in doc:
+        for _, _, _, _, content, _, _ in page.get_text("blocks"):
+            results.append(content)
     return results
+
+if __name__ == "__main__":
+
+    content = get_text("/Users/chenghao/Zotero/storage/NAG42KRC/Gerstgrasser et al. - 2024 - Is Model Collapse Inevitable Breaking the Curse of Recursion by Accumulating Real and Synthetic Dat.pdf")
+    for block in content:
+        print(block)

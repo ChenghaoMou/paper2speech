@@ -4,3 +4,4 @@ flagged
 __pycache__
 *rdb
 .env
+.DS_Store

@@ -7,10 +7,10 @@ from paper_audio.audio.processor import AsyncTTSProcessor, AudioSegment
 
 
 class AsyncAudioPlayer:
-    def __init__(self, tts_processor: AsyncTTSProcessor):
-        self.tts_processor = tts_processor
+    def __init__(self, producer: AsyncTTSProcessor):
+        self.producer = producer
         
-        self.buffer = asyncio.Queue(maxsize=5)
+        self.buffer = asyncio.Queue(maxsize=2)
         self.audio_segments = {}
         self.next_segment_to_play = 0
 
@@ -18,11 +18,13 @@ class AsyncAudioPlayer:
         self.stopped = asyncio.Event()
         self.paused = asyncio.Event()
 
-        self.current_sound = None
-        self.current_id = None
-        self.current_paragraph = None
-        self.current_paragraph_simplified = None
-        self.current_sentence = None
+        self.curr_playback = None
+        self.curr_rank = None
+        self.curr_orig_paragraph = None
+        self.curr_simp_paragraph = None
+        self.curr_sentence = None
+
+        self.total_chars = 0
 
         self.init_pygame()
 
@@ -32,10 +34,6 @@ class AsyncAudioPlayer:
             pygame.mixer.init()
         except pygame.error:
             logger.error("Error initializing Pygame. Audio playback may not work.")
-
-    @property
-    def is_ready(self) -> bool:
-        return self.playing.is_set()
     
     @property
     def is_paused(self) -> bool:
@@ -49,11 +47,13 @@ class AsyncAudioPlayer:
         while not self.is_stopped:
             try:
                 segment: AudioSegment = await asyncio.wait_for(
-                    self.tts_processor.buffer.get(), timeout=1.0
+                    self.producer.buffer.get(), timeout=1.0
                 )
                 self.audio_segments[segment.rank] = segment
+                # This adds limit to the player
                 await self.buffer.put(segment)
-                self.tts_processor.buffer.task_done()
+                self.producer.buffer.task_done()
+                self.total_chars += len(segment.sentence)
                 logger.info(f"Received audio: {segment.rank=}")
             except asyncio.TimeoutError:
                 continue
@@ -72,10 +72,9 @@ class AsyncAudioPlayer:
             segment = self.audio_segments[self.next_segment_to_play]
             
             try:
-                logger.info(f"Playing audio for {self.next_segment_to_play}: {segment.audio_path}")
-                
-                self.current_sound = pygame.mixer.Sound(segment.audio_path)
-                self.current_sound.play()
+                logger.info(f"Playing audio for {self.next_segment_to_play}")
+                self.curr_playback = pygame.mixer.Sound(segment.audio_path)
+                self.curr_playback.play()
                 
                 try:
                     await asyncio.wait_for(
@@ -85,10 +84,10 @@ class AsyncAudioPlayer:
                 except asyncio.TimeoutError:
                     pass
 
-                self.current_id = self.next_segment_to_play
-                self.current_paragraph = segment.original_paragraph
-                self.current_paragraph_simplified = segment.simplified_paragraph
-                self.current_sentence = segment.sentence
+                self.curr_rank = self.next_segment_to_play
+                self.curr_orig_paragraph = segment.original_paragraph
+                self.curr_simp_paragraph = segment.simplified_paragraph
+                self.curr_sentence = segment.sentence
 
                 while pygame.mixer.get_busy() and not self.is_stopped:
                     await asyncio.sleep(0.1)
@@ -96,19 +95,19 @@ class AsyncAudioPlayer:
             except pygame.error as e:
                 logger.error(f"Error playing audio: {e}")
 
-            logger.info(f"Finishing audio for {self.current_id}")
+            logger.info(f"Finishing audio for {self.curr_rank}")
             self.next_segment_to_play += 1
         
-        self.current_sound = None
-        self.current_id = None
-        self.current_paragraph = None
-        self.current_paragraph_simplified = None
-        self.current_sentence = None
+        self.curr_playback = None
+        self.curr_rank = None
+        self.curr_orig_paragraph = None
+        self.curr_simp_paragraph = None
+        self.curr_sentence = None
         self.playing.clear()
 
     async def run(self):
         try:
-            generate_task = asyncio.create_task(self.tts_processor.process_paragraphs())
+            generate_task = asyncio.create_task(self.producer.process_paragraphs())
             collect_task = asyncio.create_task(self.collect_audio())
             play_task = asyncio.create_task(self.play_audio())
             await asyncio.gather(generate_task, collect_task, play_task)
@@ -117,15 +116,15 @@ class AsyncAudioPlayer:
 
     async def pause(self):
         self.paused.set()
-        if self.current_sound and pygame.mixer.get_busy():
+        if self.curr_playback and pygame.mixer.get_busy():
             pygame.mixer.pause()
-            logger.info(f"Paused at {self.current_id=}")
+            logger.info(f"Paused at {self.curr_rank=}")
 
     async def resume(self):
         self.paused.clear()
-        if self.current_sound:
-            logger.info(f"Resumed from {self.current_id=}")
+        if self.curr_playback:
             pygame.mixer.unpause()
+            logger.info(f"Resumed from {self.curr_rank=}")
 
     async def stop(self):
         self.stopped.set()
@@ -136,4 +135,4 @@ class AsyncAudioPlayer:
     def set_paragraphs(self, paragraphs: list[str]):
         self.next_segment_to_play = 0
         self.audio_segments.clear()
-        self.tts_processor.paragraphs = paragraphs
+        self.producer.paragraphs = paragraphs
